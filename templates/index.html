@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>소셜 미디어 저품질 분석기</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>소셜 미디어 저품질 분석기</h1>
+            <p class="subtitle">계정 ID를 입력하면 검색 노출, 활동 빈도, 저품질 위험도를 분석합니다</p>
+        </header>
+
+        <section class="platform-tabs">
+            <button class="tab-btn active" data-platform="naver" onclick="switchTab('naver')">
+                <span class="tab-icon">N</span> 네이버 블로그
+            </button>
+            <button class="tab-btn" data-platform="youtube" onclick="switchTab('youtube')">
+                <span class="tab-icon">▶</span> 유튜브
+            </button>
+            <button class="tab-btn" data-platform="instagram" onclick="switchTab('instagram')">
+                <span class="tab-icon">◐</span> 인스타그램
+            </button>
+            <button class="tab-btn" data-platform="threads" onclick="switchTab('threads')">
+                <span class="tab-icon">@</span> 스레드
+            </button>
+            <button class="tab-btn" data-platform="x" onclick="switchTab('x')">
+                <span class="tab-icon">𝕏</span> X
+            </button>
+            <button class="tab-btn" data-platform="tiktok" onclick="switchTab('tiktok')">
+                <span class="tab-icon">♪</span> 틱톡
+            </button>
+        </section>
+
+        <section class="input-section">
+            <div class="input-group">
+                <label id="inputLabel" for="accountId">블로그 ID</label>
+                <div class="input-row-single">
+                    <input type="text" id="accountId" placeholder="예: akzkfltm2">
+                    <button id="analyzeBtn" onclick="startAnalysis()">
+                        <span class="btn-text">분석 시작</span>
+                        <span class="btn-loading" style="display:none">
+                            <span class="spinner"></span> 분석 중...
+                        </span>
+                    </button>
+                </div>
+                <p id="inputHint" class="input-hint">블로그 ID를 입력하세요 (URL의 blog.naver.com/ 뒤 부분)</p>
+            </div>
+        </section>
+
+        <div id="loading" class="loading" style="display:none">
+            <div class="loading-content">
+                <div class="loading-spinner"></div>
+                <p>분석하고 있습니다...</p>
+                <p class="loading-sub" id="loadingText">검색 노출 테스트, 게시글 수집, 저품질 판정 중</p>
+            </div>
+        </div>
+
+        <div id="results" style="display:none">
+            <div id="blogCards" class="blog-cards"></div>
+        </div>
+
+        <div id="error" class="error-msg" style="display:none"></div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
