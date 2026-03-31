@@ -653,6 +653,57 @@ def _calc_freq_from_dates(dates):
     }
 
 
+def extract_keywords(search_results):
+    """노출/미노출 게시글 제목에서 유효키워드 추출"""
+    STOP_WORDS = {
+        "은", "는", "이", "가", "을", "를", "의", "에", "에서", "로", "으로",
+        "와", "과", "도", "만", "까지", "부터", "에게", "한테", "께",
+        "그", "저", "이", "것", "수", "등", "및", "또", "더", "잘", "못",
+        "안", "좀", "꼭", "다", "매우", "정말", "진짜", "너무", "아주",
+        "하는", "하기", "하고", "하면", "했다", "하다", "되는", "되다",
+        "있는", "있다", "없는", "없다", "위한", "대한", "통한",
+        "the", "a", "an", "is", "are", "was", "were", "in", "on", "at",
+        "to", "for", "of", "with", "and", "or", "not", "no", "my", "your",
+    }
+
+    exposed_words = {}
+    not_exposed_words = {}
+
+    for r in search_results:
+        title = r.get("title", "")
+        words = re.findall(r'[가-힣]{2,}|[a-zA-Z]{3,}|\d{4,}', title)
+        words = [w for w in words if w.lower() not in STOP_WORDS]
+
+        if r["exposed"] is True:
+            for w in words:
+                exposed_words[w] = exposed_words.get(w, 0) + 1
+        elif r["exposed"] is False:
+            for w in words:
+                not_exposed_words[w] = not_exposed_words.get(w, 0) + 1
+
+    # 유효키워드: 노출 게시글에만 등장하거나 노출 비율이 높은 키워드
+    effective = []
+    ineffective = []
+
+    all_words = set(list(exposed_words.keys()) + list(not_exposed_words.keys()))
+    for w in all_words:
+        exp = exposed_words.get(w, 0)
+        nexp = not_exposed_words.get(w, 0)
+        total = exp + nexp
+        if total < 2:
+            continue
+        rate = exp / total
+        if rate >= 0.7:
+            effective.append({"keyword": w, "exposed": exp, "total": total, "rate": round(rate * 100)})
+        elif rate <= 0.3:
+            ineffective.append({"keyword": w, "exposed": exp, "total": total, "rate": round(rate * 100)})
+
+    effective.sort(key=lambda x: (-x["total"], -x["rate"]))
+    ineffective.sort(key=lambda x: (-x["total"], x["rate"]))
+
+    return {"effective": effective[:20], "ineffective": ineffective[:20]}
+
+
 def make_quality_result(score, reasons, suggestions):
     if score >= 40:
         level, text = "danger", "높음 (저품질 가능성)"
@@ -702,23 +753,31 @@ def analyze_naver_stream(blog_id):
 
     total_search = len(posts)
     search_results = []
+    search_start = time.time()
     for i, p in enumerate(posts):
         r = naver_check_search(blog_id, p["title"])
         search_results.append({"title": p["title"], "exposed": r})
         if (i + 1) % 3 == 0 or i + 1 == total_search:
+            elapsed = time.time() - search_start
+            remaining = (elapsed / (i + 1)) * (total_search - i - 1) if i > 0 else 0
+            rem_min = int(remaining // 60)
+            rem_sec = int(remaining % 60)
+            rem_text = f" (약 {rem_min}분 {rem_sec}초 남음)" if rem_min > 0 else f" (약 {rem_sec}초 남음)" if remaining > 5 else ""
             yield {"type": "progress", "phase": "search_test",
                    "current": i + 1, "total": total_search,
-                   "message": f"검색 노출 테스트 중 ({i + 1}/{total_search}건)..."}
+                   "message": f"검색 노출 테스트 중 ({i + 1}/{total_search}건){rem_text}"}
         time.sleep(0.3)
 
     site_indexed = naver_check_site_index(blog_id)
     quality = assess_naver_quality(info, posts, freq, search_results, site_indexed)
+    keywords = extract_keywords(search_results)
 
     yield {"type": "result", "data": {
         "platform": "naver", "id": blog_id, "info": info,
         "posts": [{"title": p["title"], "date": p["date"]} for p in posts[:10]],
         "freq": freq, "search_results": search_results,
         "site_indexed": site_indexed, "quality": quality,
+        "keywords": keywords,
         "url": f"https://blog.naver.com/{blog_id}",
     }, "analyzed_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
 
@@ -759,11 +818,13 @@ def analyze_youtube_stream(channel_input):
         time.sleep(0.3)
 
     quality = assess_youtube_quality(info, videos, freq, view_counts, search_results)
+    keywords = extract_keywords(search_results)
 
     yield {"type": "result", "data": {
         "platform": "youtube", "id": channel_input, "info": info,
         "posts": [{"title": v["title"], "date": v["date"][:10] if v["date"] else "", "views": v.get("views")} for v in videos[:10]],
         "freq": freq, "search_results": search_results, "quality": quality,
+        "keywords": keywords,
         "url": f"https://www.youtube.com/{channel_input if channel_input.startswith('@') else '@' + channel_input}",
     }, "analyzed_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
 

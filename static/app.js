@@ -184,6 +184,35 @@ function createCard(r) {
         `;
     }
 
+    // Keywords
+    let keywordsHtml = '';
+    if (r.keywords && (r.keywords.effective.length > 0 || r.keywords.ineffective.length > 0)) {
+        const effHtml = r.keywords.effective.map(k =>
+            `<span class="kw-tag kw-effective">${escapeHtml(k.keyword)} <small>${k.rate}%</small></span>`
+        ).join('');
+        const ineffHtml = r.keywords.ineffective.map(k =>
+            `<span class="kw-tag kw-ineffective">${escapeHtml(k.keyword)} <small>${k.rate}%</small></span>`
+        ).join('');
+
+        keywordsHtml = `
+            <div class="card-section">
+                <h4>유효 키워드 분석</h4>
+                ${effHtml ? `
+                    <div class="kw-group">
+                        <div class="kw-group-label kw-label-good">검색 노출 잘 되는 키워드</div>
+                        <div class="kw-tags">${effHtml}</div>
+                    </div>
+                ` : ''}
+                ${ineffHtml ? `
+                    <div class="kw-group">
+                        <div class="kw-group-label kw-label-bad">검색 노출 안 되는 키워드</div>
+                        <div class="kw-tags">${ineffHtml}</div>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }
+
     // Posts list
     let postsHtml = '';
     if (r.posts && r.posts.length > 0) {
@@ -251,6 +280,7 @@ function createCard(r) {
             </div>
 
             ${exposureHtml}
+            ${keywordsHtml}
             ${postsHtml}
 
             ${q.suggestions && q.suggestions.length > 0 ? `

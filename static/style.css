@@ -354,6 +354,30 @@ button#analyzeBtn:disabled { opacity: 0.5; cursor: not-allowed; }
 .search-status.not-exposed { color: var(--danger); }
 .search-status.unknown { color: var(--text-sub); }
 
+/* Keywords */
+.kw-group { margin-bottom: 12px; }
+.kw-group:last-child { margin-bottom: 0; }
+.kw-group-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+.kw-label-good { color: var(--success); }
+.kw-label-bad { color: var(--danger); }
+.kw-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.kw-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 16px;
+    font-size: 0.78rem;
+    font-weight: 500;
+}
+.kw-tag small { opacity: 0.7; font-size: 0.7rem; }
+.kw-effective { background: var(--success-bg); color: var(--success); }
+.kw-ineffective { background: var(--danger-bg); color: var(--danger); }
+
 /* Suggestions */
 .suggestion-list { list-style: none; }
 .suggestion-list li {
