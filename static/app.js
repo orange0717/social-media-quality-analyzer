@@ -137,8 +137,8 @@ function createCard(r) {
     if (r.platform === 'naver') {
         statsHtml = `
             <div class="stat-item"><div class="stat-value">${(info.posts || 0).toLocaleString()}</div><div class="stat-label">총 게시글</div></div>
-            <div class="stat-item"><div class="stat-value">${r.freq.avg_per_week || 0}</div><div class="stat-label">주간 포스팅</div></div>
-            <div class="stat-item"><div class="stat-value">${r.freq.last_post_days_ago != null ? r.freq.last_post_days_ago + '일' : '-'}</div><div class="stat-label">마지막 포스팅</div></div>
+            <div class="stat-item"><div class="stat-value">${info.visitors_today ? info.visitors_today.toLocaleString() : '-'}</div><div class="stat-label">오늘 방문자</div></div>
+            <div class="stat-item"><div class="stat-value">${info.visitors_total ? info.visitors_total.toLocaleString() : '-'}</div><div class="stat-label">누적 방문자</div></div>
         `;
     } else if (r.platform === 'youtube') {
         statsHtml = `
@@ -159,13 +159,14 @@ function createCard(r) {
     if (r.search_results && r.search_results.length > 0) {
         const exposed = r.search_results.filter(s => s.exposed === true).length;
         const notExposed = r.search_results.filter(s => s.exposed === false).length;
-        const total = exposed + notExposed;
-        const rate = total > 0 ? Math.round(exposed / total * 100) : 0;
+        const unknown = r.search_results.filter(s => s.exposed === null).length;
+        const checked = exposed + notExposed;
+        const rate = checked > 0 ? Math.round(exposed / checked * 100) : 0;
         const rateColor = rate >= 80 ? 'var(--success)' : rate >= 50 ? 'var(--warning)' : 'var(--danger)';
 
         exposureHtml = `
             <div class="card-section">
-                <h4>검색 노출 테스트 (${total}건)</h4>
+                <h4>검색 노출 테스트 (${checked}건 확인${unknown > 0 ? ` / ${unknown}건 확인불가` : ''})</h4>
                 <div class="exposure-summary">
                     <div class="exposure-rate" style="color: ${rateColor}">${rate}%</div>
                     <div class="exposure-detail">노출 ${exposed}건 / 미노출 ${notExposed}건</div>

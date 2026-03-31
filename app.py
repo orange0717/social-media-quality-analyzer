@@ -65,7 +65,7 @@ MAX_SEARCH_TEST = 30  # 동기 API용 (스트리밍은 전체 분석)
 # ═══════════════════════════════════════════════════
 
 def naver_get_blog_info(blog_id):
-    info = {"id": blog_id, "name": "", "posts": 0, "platform": "naver"}
+    info = {"id": blog_id, "name": "", "posts": 0, "visitors_today": 0, "visitors_total": 0, "platform": "naver"}
     try:
         url = f"https://blog.naver.com/prologue/PrologueList.naver?blogId={blog_id}"
         resp = http_requests.get(url, headers=HEADERS, timeout=10)
@@ -89,6 +89,34 @@ def naver_get_blog_info(blog_id):
                 info["posts"] = int(m.group(1))
     except Exception:
         pass
+    # 방문자수
+    try:
+        visitor_url = f"https://blog.naver.com/NVisitorgp4Ajax.naver?blogId={blog_id}"
+        resp = http_requests.get(visitor_url, headers=HEADERS, timeout=10)
+        if resp.status_code == 200:
+            # 오늘 방문자
+            m_today = re.search(r'"today"\s*:\s*"?(\d+)"?', resp.text)
+            if m_today:
+                info["visitors_today"] = int(m_today.group(1))
+            # 전체 방문자
+            m_total = re.search(r'"total"\s*:\s*"?(\d+)"?', resp.text)
+            if m_total:
+                info["visitors_total"] = int(m_total.group(1))
+    except Exception:
+        pass
+    if info["visitors_total"] == 0:
+        try:
+            blog_url = f"https://blog.naver.com/{blog_id}"
+            resp = http_requests.get(blog_url, headers=HEADERS, timeout=10)
+            if resp.status_code == 200:
+                m_today = re.search(r'"countVisitorToday"\s*:\s*(\d+)', resp.text)
+                if m_today:
+                    info["visitors_today"] = int(m_today.group(1))
+                m_total = re.search(r'"countVisitorAll"\s*:\s*(\d+)', resp.text)
+                if m_total:
+                    info["visitors_total"] = int(m_total.group(1))
+        except Exception:
+            pass
     return info
 
 
@@ -187,21 +215,21 @@ def assess_naver_quality(info, posts, freq, search_results, site_indexed):
 
     exposed = sum(1 for r in search_results if r["exposed"] is True)
     not_exposed = sum(1 for r in search_results if r["exposed"] is False)
-    total = exposed + not_exposed
+    checked = exposed + not_exposed  # 확인된 건수만 (None 제외)
 
-    if total > 0:
-        rate = exposed / total * 100
+    if checked > 0:
+        rate = exposed / checked * 100
         if rate == 0:
             score += 100
-            reasons.append({"text": f"검색 노출 0% ({not_exposed}건 전체 미노출) - 저품질 확정", "type": "danger"})
+            reasons.append({"text": f"검색 노출 0% ({checked}건 중 전체 미노출) - 저품질 확정", "type": "danger"})
         elif rate < 50:
             score += 25
-            reasons.append({"text": f"검색 노출 {rate:.0f}% ({exposed}/{total}건)", "type": "warning"})
+            reasons.append({"text": f"검색 노출 {rate:.0f}% ({exposed}/{checked}건 노출)", "type": "warning"})
         elif rate < 80:
             score += 10
-            reasons.append({"text": f"검색 노출 {rate:.0f}% ({exposed}/{total}건)", "type": "warning"})
+            reasons.append({"text": f"검색 노출 {rate:.0f}% ({exposed}/{checked}건 노출)", "type": "warning"})
         else:
-            reasons.append({"text": f"검색 노출 {rate:.0f}% ({exposed}/{total}건)", "type": "success"})
+            reasons.append({"text": f"검색 노출 {rate:.0f}% ({exposed}/{checked}건 노출)", "type": "success"})
 
     if site_indexed is False:
         score += 20
@@ -765,6 +793,8 @@ def analyze_naver_stream(blog_id):
         if len(fetched) < 30:
             break
 
+    # 실제 수집된 게시글 수로 info 업데이트
+    info["posts"] = len(posts)
     freq = calc_frequency(posts)
 
     total_search = len(posts)
