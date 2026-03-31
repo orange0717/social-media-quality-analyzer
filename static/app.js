@@ -250,6 +250,7 @@ function createCard(r) {
                 <h3>${escapeHtml(info.name || r.id)}</h3>
                 <div class="blog-id">
                     <a href="${r.url}" target="_blank">${r.id}</a>
+                    ${r.cached ? '<span class="cached-badge">캐시된 결과</span>' : ''}
                 </div>
             </div>
             <span class="badge ${q.level}">${q.level_text}</span>

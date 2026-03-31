@@ -6,8 +6,36 @@ import os
 import re
 import time
 import json
+import hashlib
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import quote, unquote_plus
+
+CACHE_DIR = Path(__file__).parent / "cache"
+CACHE_DIR.mkdir(exist_ok=True)
+CACHE_TTL = 86400  # 24시간
+
+
+def cache_get(platform, account_id):
+    """캐시에서 결과 조회. 유효하면 dict 반환, 아니면 None."""
+    key = hashlib.md5(f"{platform}:{account_id}".encode()).hexdigest()
+    path = CACHE_DIR / f"{key}.json"
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if time.time() - data.get("cached_at", 0) < CACHE_TTL:
+                return data
+        except (json.JSONDecodeError, KeyError):
+            pass
+    return None
+
+
+def cache_set(platform, account_id, result, analyzed_at):
+    """결과를 캐시에 저장."""
+    key = hashlib.md5(f"{platform}:{account_id}".encode()).hexdigest()
+    path = CACHE_DIR / f"{key}.json"
+    data = {"result": result, "analyzed_at": analyzed_at, "cached_at": time.time()}
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
 import requests as http_requests
 from bs4 import BeautifulSoup
@@ -164,8 +192,8 @@ def assess_naver_quality(info, posts, freq, search_results, site_indexed):
     if total > 0:
         rate = exposed / total * 100
         if rate == 0:
-            score += 40
-            reasons.append({"text": f"검색 노출 0% ({not_exposed}건 미노출)", "type": "danger"})
+            score += 100
+            reasons.append({"text": f"검색 노출 0% ({not_exposed}건 전체 미노출) - 저품질 확정", "type": "danger"})
         elif rate < 50:
             score += 25
             reasons.append({"text": f"검색 노출 {rate:.0f}% ({exposed}/{total}건)", "type": "warning"})
@@ -182,27 +210,13 @@ def assess_naver_quality(info, posts, freq, search_results, site_indexed):
         reasons.append({"text": "site: 검색 색인 확인", "type": "success"})
 
     if freq["last_post_days_ago"] is not None:
-        if freq["last_post_days_ago"] > 90:
-            score += 25
-            reasons.append({"text": f"마지막 포스팅 {freq['last_post_days_ago']}일 전 (3개월+)", "type": "danger"})
-        elif freq["last_post_days_ago"] > 30:
-            score += 15
-            reasons.append({"text": f"마지막 포스팅 {freq['last_post_days_ago']}일 전", "type": "warning"})
-        else:
-            reasons.append({"text": f"마지막 포스팅 {freq['last_post_days_ago']}일 전", "type": "success"})
-
-    if freq["recent_gap_days"] and freq["recent_gap_days"].count(0) >= 3:
-        score += 15
-        reasons.append({"text": f"같은 날 다량 포스팅 감지", "type": "warning"})
+        reasons.append({"text": f"마지막 포스팅 {freq['last_post_days_ago']}일 전", "type": "success" if freq["last_post_days_ago"] <= 30 else "warning"})
 
     suggestions = []
     if score >= 20:
         if any("미노출" in r["text"] or "노출 0%" in r["text"] for r in reasons):
             suggestions.append("글 제목에 구체적 검색 키워드 포함")
             suggestions.append("본문 1,500자 이상, 직접 촬영 이미지 3장+")
-        if any("다량 포스팅" in r["text"] for r in reasons):
-            suggestions.append("하루 1-2개씩 나눠서 포스팅")
-        suggestions.append("주 2-3회 정기적 포스팅 유지")
 
     return make_quality_result(score, reasons, suggestions)
 
@@ -705,7 +719,9 @@ def extract_keywords(search_results):
 
 
 def make_quality_result(score, reasons, suggestions):
-    if score >= 40:
+    if score >= 80:
+        level, text = "danger", "저품질 확정"
+    elif score >= 40:
         level, text = "danger", "높음 (저품질 가능성)"
     elif score >= 20:
         level, text = "warning", "보통 (주의 필요)"
@@ -896,14 +912,32 @@ if app:
             return Response(error_gen(), mimetype="text/event-stream",
                            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
+        # 캐시 확인
+        cached = cache_get(platform, account_id)
+        if cached:
+            def cached_gen():
+                result_data = cached["result"]
+                result_data["cached"] = True
+                yield f"data: {json.dumps({'type': 'result', 'data': result_data, 'analyzed_at': cached['analyzed_at']}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return Response(cached_gen(), mimetype="text/event-stream",
+                           headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
         def generate():
+            last_result = None
+            gen = analyzer(account_id)
             try:
-                for event in analyzer(account_id):
+                for event in gen:
+                    if event.get("type") == "result":
+                        last_result = event
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             except GeneratorExit:
-                pass
+                gen.close()
+                return
             except Exception as e:
                 yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            if last_result:
+                cache_set(platform, account_id, last_result["data"], last_result.get("analyzed_at", ""))
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
         return Response(generate(), mimetype="text/event-stream",

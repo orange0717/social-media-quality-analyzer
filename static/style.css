@@ -222,6 +222,15 @@ button#analyzeBtn:disabled { opacity: 0.5; cursor: not-allowed; }
 .card-header-left .blog-id { font-size: 0.78rem; color: var(--text-sub); margin-top: 2px; }
 .card-header-left .blog-id a { color: var(--accent); text-decoration: none; }
 .card-header-left .blog-id a:hover { text-decoration: underline; }
+.cached-badge {
+    display: inline-block;
+    padding: 1px 8px;
+    background: var(--info-bg);
+    border-radius: 10px;
+    font-size: 0.68rem;
+    color: var(--text-sub);
+    margin-left: 6px;
+}
 
 .card-body { padding: 20px 22px; }
 
