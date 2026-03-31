@@ -65,7 +65,7 @@ MAX_SEARCH_TEST = 30  # 동기 API용 (스트리밍은 전체 분석)
 # ═══════════════════════════════════════════════════
 
 def naver_get_blog_info(blog_id):
-    info = {"id": blog_id, "name": "", "posts": 0, "visitors_today": 0, "visitors_total": 0, "platform": "naver"}
+    info = {"id": blog_id, "name": "", "posts": 0, "platform": "naver"}
     try:
         url = f"https://blog.naver.com/prologue/PrologueList.naver?blogId={blog_id}"
         resp = http_requests.get(url, headers=HEADERS, timeout=10)
@@ -89,34 +89,6 @@ def naver_get_blog_info(blog_id):
                 info["posts"] = int(m.group(1))
     except Exception:
         pass
-    # 방문자수
-    try:
-        visitor_url = f"https://blog.naver.com/NVisitorgp4Ajax.naver?blogId={blog_id}"
-        resp = http_requests.get(visitor_url, headers=HEADERS, timeout=10)
-        if resp.status_code == 200:
-            # 오늘 방문자
-            m_today = re.search(r'"today"\s*:\s*"?(\d+)"?', resp.text)
-            if m_today:
-                info["visitors_today"] = int(m_today.group(1))
-            # 전체 방문자
-            m_total = re.search(r'"total"\s*:\s*"?(\d+)"?', resp.text)
-            if m_total:
-                info["visitors_total"] = int(m_total.group(1))
-    except Exception:
-        pass
-    if info["visitors_total"] == 0:
-        try:
-            blog_url = f"https://blog.naver.com/{blog_id}"
-            resp = http_requests.get(blog_url, headers=HEADERS, timeout=10)
-            if resp.status_code == 200:
-                m_today = re.search(r'"countVisitorToday"\s*:\s*(\d+)', resp.text)
-                if m_today:
-                    info["visitors_today"] = int(m_today.group(1))
-                m_total = re.search(r'"countVisitorAll"\s*:\s*(\d+)', resp.text)
-                if m_total:
-                    info["visitors_total"] = int(m_total.group(1))
-        except Exception:
-            pass
     return info
 
 
