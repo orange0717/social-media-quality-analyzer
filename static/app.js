@@ -1,4 +1,5 @@
 let currentPlatform = 'naver';
+let currentEventSource = null;
 
 const PLATFORM_CONFIG = {
     naver: { label: '블로그 ID', placeholder: '예: akzkfltm2', hint: 'URL의 blog.naver.com/ 뒤 부분' },
@@ -10,6 +11,10 @@ const PLATFORM_CONFIG = {
 };
 
 function switchTab(platform) {
+    if (currentEventSource) {
+        currentEventSource.close();
+        currentEventSource = null;
+    }
     currentPlatform = platform;
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.platform === platform);
@@ -21,13 +26,19 @@ function switchTab(platform) {
     document.getElementById('accountId').value = '';
     document.getElementById('results').style.display = 'none';
     document.getElementById('error').style.display = 'none';
+    document.getElementById('loading').style.display = 'none';
 }
 
-async function startAnalysis() {
+function startAnalysis() {
     const accountId = document.getElementById('accountId').value.trim();
     if (!accountId) {
         showError('ID를 입력해주세요.');
         return;
+    }
+
+    if (currentEventSource) {
+        currentEventSource.close();
+        currentEventSource = null;
     }
 
     const btn = document.getElementById('analyzeBtn');
@@ -39,33 +50,64 @@ async function startAnalysis() {
     document.getElementById('results').style.display = 'none';
     document.getElementById('error').style.display = 'none';
 
-    const loadingText = document.getElementById('loadingText');
-    if (currentPlatform === 'naver') {
-        loadingText.textContent = '전체 게시글 검색 노출 테스트 중 (최대 30건)...';
-    } else {
-        loadingText.textContent = '데이터 수집 및 분석 중...';
-    }
+    showProgress(0, 0, '분석 준비 중...');
 
-    try {
-        const resp = await fetch('/api/analyze', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ platform: currentPlatform, id: accountId }),
-        });
+    const params = new URLSearchParams({ platform: currentPlatform, id: accountId });
+    const es = new EventSource(`/api/analyze/stream?${params}`);
+    currentEventSource = es;
+    let gotResult = false;
 
-        const data = await resp.json();
-        if (!resp.ok) {
-            showError(data.error || '분석 중 오류가 발생했습니다.');
-            return;
+    es.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+
+        if (data.type === 'progress') {
+            showProgress(data.current, data.total, data.message);
+        } else if (data.type === 'result') {
+            gotResult = true;
+            renderResult(data.data, data.analyzed_at);
+            cleanup();
+        } else if (data.type === 'error') {
+            showError(data.message);
+            cleanup();
+        } else if (data.type === 'done') {
+            cleanup();
         }
-        renderResult(data.result, data.analyzed_at);
-    } catch (e) {
-        showError('서버 연결 실패: ' + e.message);
-    } finally {
+    };
+
+    es.onerror = function() {
+        if (!gotResult) {
+            showError('서버 연결이 끊어졌습니다. 다시 시도해주세요.');
+        }
+        cleanup();
+    };
+
+    function cleanup() {
+        es.close();
+        currentEventSource = null;
         btn.disabled = false;
         btn.querySelector('.btn-text').style.display = 'inline';
         btn.querySelector('.btn-loading').style.display = 'none';
         document.getElementById('loading').style.display = 'none';
+    }
+}
+
+function showProgress(current, total, message) {
+    const loadingText = document.getElementById('loadingText');
+    const progressBar = document.getElementById('progressBar');
+    const progressFill = document.getElementById('progressFill');
+    const progressDetail = document.getElementById('progressDetail');
+
+    loadingText.textContent = message;
+
+    if (total > 0) {
+        const pct = Math.round((current / total) * 100);
+        progressBar.style.display = 'block';
+        progressFill.style.width = pct + '%';
+        progressDetail.textContent = `${current.toLocaleString()} / ${total.toLocaleString()}건 (${pct}%)`;
+        progressDetail.style.display = 'block';
+    } else {
+        progressBar.style.display = 'none';
+        progressDetail.style.display = 'none';
     }
 }
 
@@ -133,7 +175,7 @@ function createCard(r) {
                         <li>
                             <div class="search-title">${escapeHtml(s.title)}</div>
                             <div class="search-status ${s.exposed === true ? 'exposed' : s.exposed === false ? 'not-exposed' : 'unknown'}">
-                                ${s.exposed === true ? '✅ 노출' : s.exposed === false ? '❌ 미노출' : '⚠️ 확인불가'}
+                                ${s.exposed === true ? '노출' : s.exposed === false ? '미노출' : '확인불가'}
                             </div>
                         </li>
                     `).join('')}
@@ -201,7 +243,7 @@ function createCard(r) {
                 <ul class="reason-list">
                     ${q.reasons.map(reason => `
                         <li class="${reason.type}">
-                            <span>${reason.type === 'success' ? '✓' : reason.type === 'warning' ? '⚠' : '✗'}</span>
+                            <span>${reason.type === 'success' ? '+' : reason.type === 'warning' ? '!' : '-'}</span>
                             ${escapeHtml(reason.text)}
                         </li>
                     `).join('')}

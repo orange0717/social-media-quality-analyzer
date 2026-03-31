@@ -163,6 +163,31 @@ button#analyzeBtn:disabled { opacity: 0.5; cursor: not-allowed; }
 .loading-content p { font-size: 1rem; margin-bottom: 4px; }
 .loading-sub { color: var(--text-sub); font-size: 0.82rem !important; }
 
+/* Progress Bar */
+.progress-bar {
+    width: 100%;
+    max-width: 400px;
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    margin: 12px auto 0;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+    min-width: 0;
+}
+
+.progress-detail {
+    font-size: 0.78rem;
+    color: var(--text-sub);
+    margin-top: 6px;
+}
+
 /* Error */
 .error-msg {
     background: var(--danger-bg);

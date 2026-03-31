@@ -19,7 +19,7 @@ except ImportError:
 
 app = None
 try:
-    from flask import Flask, render_template, jsonify, request
+    from flask import Flask, render_template, jsonify, request, Response
     app = Flask(__name__)
 except ImportError:
     pass
@@ -29,7 +29,7 @@ HEADERS = {
     "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
-MAX_SEARCH_TEST = 30  # 검색 노출 테스트 최대 게시글 수
+MAX_SEARCH_TEST = 30  # 동기 API용 (스트리밍은 전체 분석)
 
 
 # ═══════════════════════════════════════════════════
@@ -64,26 +64,34 @@ def naver_get_blog_info(blog_id):
     return info
 
 
+def naver_get_posts_page(blog_id, page):
+    """단일 페이지(30건) fetch"""
+    posts = []
+    try:
+        url = f"https://blog.naver.com/PostTitleListAsync.naver?blogId={blog_id}&viewdate=&currentPage={page}&categoryNo=0&parentCategoryNo=0&countPerPage=30"
+        resp = http_requests.get(url, headers=HEADERS, timeout=10)
+        if resp.status_code == 200:
+            titles = re.findall(r'"title"\s*:\s*"([^"]*)"', resp.text)
+            dates = re.findall(r'"addDate"\s*:\s*"([^"]*)"', resp.text)
+            log_nos = re.findall(r'"logNo"\s*:\s*"?(\d+)"?', resp.text)
+            for i in range(min(len(titles), len(dates))):
+                posts.append({
+                    "title": unquote_plus(titles[i]),
+                    "date": dates[i] if i < len(dates) else "",
+                    "id": log_nos[i] if i < len(log_nos) else "",
+                })
+    except Exception:
+        pass
+    return posts
+
+
 def naver_get_posts(blog_id, count=30):
     posts = []
     pages = (count + 29) // 30
     for page in range(1, pages + 1):
-        try:
-            url = f"https://blog.naver.com/PostTitleListAsync.naver?blogId={blog_id}&viewdate=&currentPage={page}&categoryNo=0&parentCategoryNo=0&countPerPage=30"
-            resp = http_requests.get(url, headers=HEADERS, timeout=10)
-            if resp.status_code == 200:
-                titles = re.findall(r'"title"\s*:\s*"([^"]*)"', resp.text)
-                dates = re.findall(r'"addDate"\s*:\s*"([^"]*)"', resp.text)
-                log_nos = re.findall(r'"logNo"\s*:\s*"?(\d+)"?', resp.text)
-                for i in range(min(len(titles), len(dates))):
-                    posts.append({
-                        "title": unquote_plus(titles[i]),
-                        "date": dates[i] if i < len(dates) else "",
-                        "id": log_nos[i] if i < len(log_nos) else "",
-                    })
-        except Exception:
-            break
-        if len(posts) >= count:
+        fetched = naver_get_posts_page(blog_id, page)
+        posts.extend(fetched)
+        if len(fetched) < 30 or len(posts) >= count:
             break
     return posts[:count]
 
@@ -659,6 +667,117 @@ def make_quality_result(score, reasons, suggestions):
 # Flask 라우트
 # ═══════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════
+# 스트리밍 분석기 (SSE용 generator)
+# ═══════════════════════════════════════════════════
+
+def analyze_naver_stream(blog_id):
+    yield {"type": "progress", "phase": "info", "current": 0, "total": 0,
+           "message": "블로그 정보 수집 중..."}
+    info = naver_get_blog_info(blog_id)
+    total_posts = info.get("posts", 0)
+
+    if total_posts == 0:
+        yield {"type": "result", "data": {
+            "platform": "naver", "id": blog_id, "info": info,
+            "posts": [], "freq": _calc_freq_from_dates([]),
+            "search_results": [], "site_indexed": None,
+            "quality": make_quality_result(0, [{"text": "게시글이 없습니다", "type": "warning"}], []),
+            "url": f"https://blog.naver.com/{blog_id}",
+        }, "analyzed_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
+        return
+
+    posts = []
+    pages = (total_posts + 29) // 30
+    for page in range(1, pages + 1):
+        fetched = naver_get_posts_page(blog_id, page)
+        posts.extend(fetched)
+        yield {"type": "progress", "phase": "fetch_posts",
+               "current": len(posts), "total": total_posts,
+               "message": f"게시글 목록 수집 중 ({len(posts)}/{total_posts}건)..."}
+        if len(fetched) < 30:
+            break
+
+    freq = calc_frequency(posts)
+
+    total_search = len(posts)
+    search_results = []
+    for i, p in enumerate(posts):
+        r = naver_check_search(blog_id, p["title"])
+        search_results.append({"title": p["title"], "exposed": r})
+        if (i + 1) % 3 == 0 or i + 1 == total_search:
+            yield {"type": "progress", "phase": "search_test",
+                   "current": i + 1, "total": total_search,
+                   "message": f"검색 노출 테스트 중 ({i + 1}/{total_search}건)..."}
+        time.sleep(0.3)
+
+    site_indexed = naver_check_site_index(blog_id)
+    quality = assess_naver_quality(info, posts, freq, search_results, site_indexed)
+
+    yield {"type": "result", "data": {
+        "platform": "naver", "id": blog_id, "info": info,
+        "posts": [{"title": p["title"], "date": p["date"]} for p in posts[:10]],
+        "freq": freq, "search_results": search_results,
+        "site_indexed": site_indexed, "quality": quality,
+        "url": f"https://blog.naver.com/{blog_id}",
+    }, "analyzed_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
+
+
+def analyze_youtube_stream(channel_input):
+    yield {"type": "progress", "phase": "info", "current": 0, "total": 0,
+           "message": "채널 정보 수집 중..."}
+    info = youtube_get_channel_info(channel_input)
+    channel_id = info.get("channel_id", channel_input)
+
+    yield {"type": "progress", "phase": "fetch_posts", "current": 0, "total": 0,
+           "message": "최근 영상 목록 수집 중..."}
+    videos = youtube_get_videos(channel_id)
+
+    total_videos = len(videos)
+    view_counts = []
+    for i, v in enumerate(videos):
+        if v.get("id"):
+            vc = youtube_get_view_count(v["id"])
+            v["views"] = vc
+            if vc is not None:
+                view_counts.append(vc)
+            yield {"type": "progress", "phase": "view_count",
+                   "current": i + 1, "total": total_videos,
+                   "message": f"조회수 수집 중 ({i + 1}/{total_videos}건)..."}
+            time.sleep(0.3)
+
+    freq = calc_frequency_iso(videos)
+
+    total_search = len(videos)
+    search_results = []
+    for i, v in enumerate(videos):
+        r = youtube_check_search(info["name"], v["title"])
+        search_results.append({"title": v["title"], "exposed": r})
+        yield {"type": "progress", "phase": "search_test",
+               "current": i + 1, "total": total_search,
+               "message": f"검색 노출 테스트 중 ({i + 1}/{total_search}건)..."}
+        time.sleep(0.3)
+
+    quality = assess_youtube_quality(info, videos, freq, view_counts, search_results)
+
+    yield {"type": "result", "data": {
+        "platform": "youtube", "id": channel_input, "info": info,
+        "posts": [{"title": v["title"], "date": v["date"][:10] if v["date"] else "", "views": v.get("views")} for v in videos[:10]],
+        "freq": freq, "search_results": search_results, "quality": quality,
+        "url": f"https://www.youtube.com/{channel_input if channel_input.startswith('@') else '@' + channel_input}",
+    }, "analyzed_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
+
+
+def _wrap_sync_stream(sync_fn):
+    def stream_fn(account_id):
+        yield {"type": "progress", "phase": "info", "current": 0, "total": 0,
+               "message": "프로필 정보 수집 중..."}
+        result = sync_fn(account_id)
+        yield {"type": "result", "data": result,
+               "analyzed_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    return stream_fn
+
+
 ANALYZERS = {
     "naver": analyze_naver,
     "youtube": analyze_youtube,
@@ -666,6 +785,15 @@ ANALYZERS = {
     "x": analyze_x,
     "threads": analyze_threads,
     "tiktok": analyze_tiktok,
+}
+
+STREAM_ANALYZERS = {
+    "naver": analyze_naver_stream,
+    "youtube": analyze_youtube_stream,
+    "instagram": _wrap_sync_stream(analyze_instagram),
+    "x": _wrap_sync_stream(analyze_x),
+    "threads": _wrap_sync_stream(analyze_threads),
+    "tiktok": _wrap_sync_stream(analyze_tiktok),
 }
 
 if app:
@@ -689,7 +817,38 @@ if app:
         result = analyzer(account_id)
         return jsonify({"result": result, "analyzed_at": datetime.now().strftime("%Y-%m-%d %H:%M")})
 
+    @app.route("/api/analyze/stream")
+    def api_analyze_stream():
+        platform = request.args.get("platform", "naver")
+        account_id = request.args.get("id", "").strip()
+
+        if not account_id:
+            def error_gen():
+                yield f"data: {json.dumps({'type': 'error', 'message': 'ID를 입력해주세요'}, ensure_ascii=False)}\n\n"
+            return Response(error_gen(), mimetype="text/event-stream",
+                           headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+        analyzer = STREAM_ANALYZERS.get(platform)
+        if not analyzer:
+            def error_gen():
+                yield f"data: {json.dumps({'type': 'error', 'message': f'지원하지 않는 플랫폼: {platform}'}, ensure_ascii=False)}\n\n"
+            return Response(error_gen(), mimetype="text/event-stream",
+                           headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+        def generate():
+            try:
+                for event in analyzer(account_id):
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            except GeneratorExit:
+                pass
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+        return Response(generate(), mimetype="text/event-stream",
+                       headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(debug=True, port=port)
+    port = int(os.environ.get("PORT", 5001))
+    app.run(debug=True, port=port, threaded=True)
