@@ -855,6 +855,24 @@ def _wrap_sync_stream(sync_fn):
     return stream_fn
 
 
+def extract_id_from_input(platform, raw_input):
+    """URL이 입력되면 ID만 추출"""
+    raw_input = raw_input.strip().rstrip("/")
+    patterns = {
+        "naver": [r'blog\.naver\.com/([^/?#]+)', r'blog\.naver\.com/prologue/.*blogId=([^&]+)'],
+        "youtube": [r'youtube\.com/(@[^/?#]+)', r'youtube\.com/channel/([^/?#]+)', r'youtube\.com/c/([^/?#]+)'],
+        "instagram": [r'instagram\.com/([^/?#]+)'],
+        "threads": [r'threads\.net/@?([^/?#]+)'],
+        "x": [r'(?:twitter\.com|x\.com)/([^/?#]+)'],
+        "tiktok": [r'tiktok\.com/@?([^/?#]+)'],
+    }
+    for pattern in patterns.get(platform, []):
+        m = re.search(pattern, raw_input)
+        if m:
+            return m.group(1).lstrip("@") if platform not in ("youtube",) else m.group(1)
+    return raw_input.lstrip("@")
+
+
 ANALYZERS = {
     "naver": analyze_naver,
     "youtube": analyze_youtube,
@@ -882,7 +900,8 @@ if app:
     def api_analyze():
         data = request.get_json()
         platform = data.get("platform", "naver")
-        account_id = data.get("id", "").strip()
+        raw_id = data.get("id", "").strip()
+        account_id = extract_id_from_input(platform, raw_id) if raw_id else ""
 
         if not account_id:
             return jsonify({"error": "ID를 입력해주세요"}), 400
@@ -897,7 +916,8 @@ if app:
     @app.route("/api/analyze/stream")
     def api_analyze_stream():
         platform = request.args.get("platform", "naver")
-        account_id = request.args.get("id", "").strip()
+        raw_id = request.args.get("id", "").strip()
+        account_id = extract_id_from_input(platform, raw_id) if raw_id else ""
 
         if not account_id:
             def error_gen():

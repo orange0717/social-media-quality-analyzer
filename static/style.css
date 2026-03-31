@@ -70,6 +70,7 @@ header h1 { font-size: 1.8rem; font-weight: 700; color: var(--text); margin-bott
 }
 
 .tab-icon { font-weight: 700; font-size: 0.9rem; }
+.tab-icon-svg { width: 16px; height: 16px; fill: currentColor; flex-shrink: 0; }
 
 /* Input Section */
 .input-section {
