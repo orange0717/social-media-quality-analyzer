@@ -866,15 +866,15 @@ def extract_keywords(search_results):
 
 def make_quality_result(score, reasons, suggestions):
     if score >= 80:
-        level, text = "danger", "저품질 확정"
+        level, text = "danger", "저품질 위험도: 확정"
     elif score >= 60:
-        level, text = "danger", "높음 (저품질 의심)"
+        level, text = "danger", "저품질 위험도: 높음"
     elif score >= 40:
-        level, text = "warning", "주의 (품질 문제 다수)"
+        level, text = "warning", "저품질 위험도: 주의"
     elif score >= 20:
-        level, text = "warning", "보통 (일부 개선 필요)"
+        level, text = "warning", "저품질 위험도: 낮음"
     else:
-        level, text = "success", "양호"
+        level, text = "success", "저품질 위험도: 없음"
     return {"score": score, "level": level, "level_text": text, "reasons": reasons, "suggestions": suggestions}
 
 
