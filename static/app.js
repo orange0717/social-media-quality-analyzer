@@ -137,8 +137,8 @@ function createCard(r) {
     if (r.platform === 'naver') {
         statsHtml = `
             <div class="stat-item"><div class="stat-value">${(info.posts || 0).toLocaleString()}</div><div class="stat-label">총 게시글</div></div>
-            <div class="stat-item"><div class="stat-value">${r.freq.avg_per_week || 0}</div><div class="stat-label">주간 포스팅</div></div>
-            <div class="stat-item"><div class="stat-value">${r.freq.last_post_days_ago != null ? r.freq.last_post_days_ago + '일' : '-'}</div><div class="stat-label">마지막 포스팅</div></div>
+            <div class="stat-item"><div class="stat-value">${info.visitors_today ? info.visitors_today.toLocaleString() : '-'}</div><div class="stat-label">오늘 방문자</div></div>
+            <div class="stat-item"><div class="stat-value">${info.visitors_total ? info.visitors_total.toLocaleString() : '-'}</div><div class="stat-label">누적 방문자</div></div>
         `;
     } else if (r.platform === 'youtube') {
         statsHtml = `

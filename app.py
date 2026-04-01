@@ -57,6 +57,10 @@ HEADERS = {
     "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
+# Naver Search API
+NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID", "")
+NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET", "")
+
 MAX_SEARCH_TEST = 30  # 동기 API용 (스트리밍은 전체 분석)
 
 
@@ -65,7 +69,7 @@ MAX_SEARCH_TEST = 30  # 동기 API용 (스트리밍은 전체 분석)
 # ═══════════════════════════════════════════════════
 
 def naver_get_blog_info(blog_id):
-    info = {"id": blog_id, "name": "", "posts": 0, "platform": "naver"}
+    info = {"id": blog_id, "name": "", "posts": 0, "visitors_today": 0, "visitors_total": 0, "platform": "naver"}
     try:
         url = f"https://blog.naver.com/prologue/PrologueList.naver?blogId={blog_id}"
         resp = http_requests.get(url, headers=HEADERS, timeout=10)
@@ -87,6 +91,19 @@ def naver_get_blog_info(blog_id):
             m = re.search(r'"totalCount"\s*:\s*"?(\d+)"?', resp.text)
             if m:
                 info["posts"] = int(m.group(1))
+    except Exception:
+        pass
+    # 방문자수 (모바일 페이지에서 추출)
+    try:
+        mobile_url = f"https://m.blog.naver.com/{blog_id}"
+        resp = http_requests.get(mobile_url, headers=HEADERS, timeout=10)
+        if resp.status_code == 200:
+            m_today = re.search(r'오늘\s*([\d,]+)', resp.text)
+            if m_today:
+                info["visitors_today"] = int(m_today.group(1).replace(",", ""))
+            m_total = re.search(r'전체\s*([\d,]+)', resp.text)
+            if m_total:
+                info["visitors_total"] = int(m_total.group(1).replace(",", ""))
     except Exception:
         pass
     return info
@@ -125,6 +142,44 @@ def naver_get_posts(blog_id, count=30):
 
 
 def naver_check_search(blog_id, title):
+    """Naver Search API로 검색 노출 확인. 상위 10건/전체 100건 구분 반환."""
+    if not title:
+        return None
+    if not NAVER_CLIENT_ID or not NAVER_CLIENT_SECRET:
+        return _naver_check_search_scrape(blog_id, title)
+    try:
+        api_url = "https://openapi.naver.com/v1/search/blog.json"
+        params = {"query": title[:50].strip(), "display": 100}
+        api_headers = {
+            "X-Naver-Client-Id": NAVER_CLIENT_ID,
+            "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
+        }
+        resp = http_requests.get(api_url, headers=api_headers, params=params, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get("items", [])
+            for idx, item in enumerate(items):
+                link = item.get("bloggerlink", "") + item.get("link", "")
+                if blog_id.lower() in link.lower():
+                    return {"exposed": True, "rank": idx + 1, "top10": idx < 10}
+            return {"exposed": False, "rank": None, "top10": False}
+    except Exception:
+        pass
+    return None
+
+
+def _normalize_search_result(title, r):
+    """naver_check_search 결과를 통일된 형식으로 변환"""
+    if r is None:
+        return {"title": title, "exposed": None, "rank": None, "top10": False}
+    if isinstance(r, dict):
+        return {"title": title, "exposed": r.get("exposed"), "rank": r.get("rank"), "top10": r.get("top10", False)}
+    # bool (스크래핑 폴백)
+    return {"title": title, "exposed": r, "rank": None, "top10": False}
+
+
+def _naver_check_search_scrape(blog_id, title):
+    """폴백: 스크래핑 방식 (API 키 없을 때)"""
     if not title:
         return None
     try:
@@ -141,6 +196,27 @@ def naver_check_search(blog_id, title):
 
 
 def naver_check_site_index(blog_id):
+    """Naver Search API로 site: 색인 확인"""
+    if not NAVER_CLIENT_ID or not NAVER_CLIENT_SECRET:
+        return _naver_check_site_index_scrape(blog_id)
+    try:
+        api_url = "https://openapi.naver.com/v1/search/blog.json"
+        params = {"query": f"site:blog.naver.com/{blog_id}", "display": 1}
+        api_headers = {
+            "X-Naver-Client-Id": NAVER_CLIENT_ID,
+            "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
+        }
+        resp = http_requests.get(api_url, headers=api_headers, params=params, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            return data.get("total", 0) > 0
+    except Exception:
+        pass
+    return None
+
+
+def _naver_check_site_index_scrape(blog_id):
+    """폴백: 스크래핑 방식"""
     try:
         q = quote(f"site:blog.naver.com/{blog_id}")
         resp = http_requests.get(
@@ -162,7 +238,7 @@ def analyze_naver(blog_id):
     search_results = []
     for p in posts[:MAX_SEARCH_TEST]:
         r = naver_check_search(blog_id, p["title"])
-        search_results.append({"title": p["title"], "exposed": r})
+        search_results.append(_normalize_search_result(p["title"], r))
         time.sleep(0.3)
 
     site_indexed = naver_check_site_index(blog_id)
@@ -188,6 +264,7 @@ def assess_naver_quality(info, posts, freq, search_results, site_indexed):
     exposed = sum(1 for r in search_results if r["exposed"] is True)
     not_exposed = sum(1 for r in search_results if r["exposed"] is False)
     checked = exposed + not_exposed  # 확인된 건수만 (None 제외)
+    top10_count = sum(1 for r in search_results if r.get("top10") is True)
 
     if checked > 0:
         rate = exposed / checked * 100
@@ -203,6 +280,20 @@ def assess_naver_quality(info, posts, freq, search_results, site_indexed):
         else:
             reasons.append({"text": f"검색 노출 {rate:.0f}% ({exposed}/{checked}건 노출)", "type": "success"})
 
+        # 상위 10건 노출률 (실제 사용자가 보는 영역)
+        top10_rate = top10_count / checked * 100
+        if top10_rate == 0 and exposed > 0:
+            score += 30
+            reasons.append({"text": f"상위 노출 0% (검색 결과에 뜨지만 1페이지 밖) - 실질적 저품질", "type": "danger"})
+        elif top10_rate < 30:
+            score += 15
+            reasons.append({"text": f"상위 노출 {top10_rate:.0f}% ({top10_count}/{checked}건 상위 10위 내)", "type": "warning"})
+        elif top10_rate < 60:
+            score += 5
+            reasons.append({"text": f"상위 노출 {top10_rate:.0f}% ({top10_count}/{checked}건 상위 10위 내)", "type": "warning"})
+        else:
+            reasons.append({"text": f"상위 노출 {top10_rate:.0f}% ({top10_count}/{checked}건 상위 10위 내)", "type": "success"})
+
     if site_indexed is False:
         score += 20
         reasons.append({"text": "site: 검색 미색인", "type": "danger"})
@@ -212,11 +303,66 @@ def assess_naver_quality(info, posts, freq, search_results, site_indexed):
     if freq["last_post_days_ago"] is not None:
         reasons.append({"text": f"마지막 포스팅 {freq['last_post_days_ago']}일 전", "type": "success" if freq["last_post_days_ago"] <= 30 else "warning"})
 
+    # 방문자수 분석
+    total_posts = info.get("posts", 0)
+    visitors_today = info.get("visitors_today", 0)
+    visitors_total = info.get("visitors_total", 0)
+
+    # 일 방문자 절대값 평가 (게시글 많은 블로그 기준)
+    if total_posts >= 100:
+        if visitors_today == 0:
+            score += 25
+            reasons.append({"text": f"오늘 방문자 0명 (게시글 {total_posts:,}개 블로그)", "type": "danger"})
+        elif visitors_today < 30:
+            score += 15
+            reasons.append({"text": f"오늘 방문자 {visitors_today:,}명 (게시글 {total_posts:,}개 대비 매우 적음)", "type": "danger"})
+        elif visitors_today < 100:
+            score += 5
+            reasons.append({"text": f"오늘 방문자 {visitors_today:,}명", "type": "warning"})
+        else:
+            reasons.append({"text": f"오늘 방문자 {visitors_today:,}명", "type": "success"})
+    elif visitors_today > 0:
+        reasons.append({"text": f"오늘 방문자 {visitors_today:,}명", "type": "success" if visitors_today >= 100 else "warning" if visitors_today >= 30 else "danger"})
+    elif total_posts > 0:
+        score += 15
+        reasons.append({"text": "오늘 방문자 0명", "type": "danger"})
+
+    if visitors_total > 0:
+        reasons.append({"text": f"누적 방문자 {visitors_total:,}명", "type": "success" if visitors_total >= 100000 else "warning"})
+
+    # 게시글 대비 방문자수 비율 (일 방문자 / 총 게시글)
+    if total_posts >= 50:
+        visitor_per_post = visitors_today / total_posts if total_posts > 0 else 0
+        if visitor_per_post < 0.005:  # 게시글 200개당 방문자 1명 미만
+            score += 25
+            reasons.append({"text": f"게시글 대비 방문자 극히 적음 (게시글 {total_posts:,}개, 일 방문자 {visitors_today:,}명, 비율 {visitor_per_post:.4f})", "type": "danger"})
+        elif visitor_per_post < 0.01:  # 게시글 100개당 방문자 1명 미만
+            score += 15
+            reasons.append({"text": f"게시글 대비 방문자 매우 적음 (게시글 {total_posts:,}개, 일 방문자 {visitors_today:,}명)", "type": "danger"})
+        elif visitor_per_post < 0.05:  # 게시글 100개당 방문자 5명 미만
+            score += 10
+            reasons.append({"text": f"게시글 대비 방문자 적음 (게시글 {total_posts:,}개, 일 방문자 {visitors_today:,}명)", "type": "warning"})
+
+    # 공유글 비율 분석
+    if len(search_results) >= 10:
+        share_count = sum(1 for r in search_results if "[공유]" in r.get("title", "") or "공유" == r.get("title", "")[:2])
+        share_rate = share_count / len(search_results) * 100
+        if share_rate >= 30:
+            score += 10
+            reasons.append({"text": f"공유글 비율 {share_rate:.0f}% ({share_count}/{len(search_results)}건) - 원본 콘텐츠 부족", "type": "danger"})
+        elif share_rate >= 15:
+            score += 5
+            reasons.append({"text": f"공유글 비율 {share_rate:.0f}% ({share_count}/{len(search_results)}건)", "type": "warning"})
+
     suggestions = []
     if score >= 20:
         if any("미노출" in r["text"] or "노출 0%" in r["text"] for r in reasons):
             suggestions.append("글 제목에 구체적 검색 키워드 포함")
             suggestions.append("본문 1,500자 이상, 직접 촬영 이미지 3장+")
+        if any("방문자" in r["text"] for r in reasons if r["type"] == "danger"):
+            suggestions.append("검색 유입 키워드 분석 후 SEO 최적화 필요")
+            suggestions.append("제목에 검색량 높은 키워드를 자연스럽게 포함")
+            suggestions.append("공유 글 비중을 줄이고 원본 콘텐츠 비율 높이기")
 
     return make_quality_result(score, reasons, suggestions)
 
@@ -721,10 +867,12 @@ def extract_keywords(search_results):
 def make_quality_result(score, reasons, suggestions):
     if score >= 80:
         level, text = "danger", "저품질 확정"
+    elif score >= 60:
+        level, text = "danger", "높음 (저품질 의심)"
     elif score >= 40:
-        level, text = "danger", "높음 (저품질 가능성)"
+        level, text = "warning", "주의 (품질 문제 다수)"
     elif score >= 20:
-        level, text = "warning", "보통 (주의 필요)"
+        level, text = "warning", "보통 (일부 개선 필요)"
     else:
         level, text = "success", "양호"
     return {"score": score, "level": level, "level_text": text, "reasons": reasons, "suggestions": suggestions}
@@ -774,7 +922,7 @@ def analyze_naver_stream(blog_id):
     search_start = time.time()
     for i, p in enumerate(posts):
         r = naver_check_search(blog_id, p["title"])
-        search_results.append({"title": p["title"], "exposed": r})
+        search_results.append(_normalize_search_result(p["title"], r))
         if (i + 1) % 3 == 0 or i + 1 == total_search:
             elapsed = time.time() - search_start
             remaining = (elapsed / (i + 1)) * (total_search - i - 1) if i > 0 else 0
